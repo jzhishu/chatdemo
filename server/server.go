@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"reflect"
 )
 
-func writeActiveChan(conn net.Conn, activeChan chan net.Conn) {
-	fmt.Println(reflect.TypeOf(conn).Kind())
+type Messager struct {
+	conn    net.Conn
+	content string
+}
+
+func writeActiveChan(conn net.Conn, activeChan chan Messager) {
+	// fmt.Println(reflect.TypeOf(conn).Kind())
 
 	str := ""
 	fmt.Println("接收到服务端的消息，开始读取")
@@ -19,9 +23,12 @@ func writeActiveChan(conn net.Conn, activeChan chan net.Conn) {
 		buf := make([]byte, 512)
 		// 以buf为尺度去读取数据，类似于用勺子去桶里打水
 		n, err := conn.Read(buf)
-
-		if err == io.EOF {
-			// fmt.Println("数据读取完了")
+		fmt.Println("读到了数据")
+		if err == io.EOF || n < 512 {
+			fmt.Println("读到了最后一行")
+			// 如果到末尾了
+			// 把结果数据拼接
+			str += string(buf[:n])
 			break
 		}
 
@@ -35,7 +42,29 @@ func writeActiveChan(conn net.Conn, activeChan chan net.Conn) {
 	}
 	fmt.Println("数据读取拼接完毕，将conn放到active管道中，准备想其他所有conn同步")
 	if str != "" {
-		activeChan <- conn
+		msg := Messager{conn: conn, content: str}
+		fmt.Printf("数据加到管道中了: %v", msg)
+		activeChan <- msg
+	}
+}
+
+func broadcast(connChan chan net.Conn, activeChan chan Messager) {
+	for {
+		if len(activeChan) == 0 {
+			continue
+		}
+		fmt.Println("开始从管道取值，准备广播")
+		// 循环的从chan中取出值
+		messager := <-activeChan
+		fmt.Println("获取到待同步数据: ", messager.content)
+		fmt.Println("connList: ", connChan)
+		for item := range connChan {
+			if messager.conn.RemoteAddr() == item.RemoteAddr() {
+				continue
+			}
+			fmt.Println("正在同步消息: ", messager.content)
+			item.Write([]byte(messager.content))
+		}
 	}
 }
 
@@ -50,14 +79,14 @@ func main() {
 	defer listener.Close()
 
 	// 创建一个保存所有连接的切片
-	connList := []net.Conn{}
+	connChan := make(chan net.Conn, 500)
 
 	// 创建一个保存活跃消息的管道
-	activeChan := make(chan net.Conn, 500)
-
+	activeChan := make(chan Messager, 500)
+	go broadcast(connChan, activeChan)
 	for {
 		conn, err := listener.Accept()
-		// connList = append(connList, &conn)
+		connChan <- conn
 
 		// activeChan <- &conn
 		if err != nil {
@@ -66,5 +95,6 @@ func main() {
 
 		fmt.Printf("客户端[%v]成功登录\n", conn.RemoteAddr())
 		go writeActiveChan(conn, activeChan)
+
 	}
 }
