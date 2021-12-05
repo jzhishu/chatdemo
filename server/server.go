@@ -46,6 +46,7 @@ func writeActiveChan(conn net.Conn, activeChan chan Messager) {
 		fmt.Printf("数据加到管道中了: %v", msg)
 		activeChan <- msg
 	}
+	writeActiveChan(conn, activeChan)
 }
 
 func broadcast(connChan chan net.Conn, activeChan chan Messager) {
@@ -57,14 +58,18 @@ func broadcast(connChan chan net.Conn, activeChan chan Messager) {
 		// 循环的从chan中取出值
 		messager := <-activeChan
 		fmt.Println("获取到待同步数据: ", messager.content)
-		fmt.Println("connList: ", connChan)
-		for item := range connChan {
+		cacheChan := make(chan net.Conn, 500)
+
+		for len(connChan) > 0 {
+			item := <-connChan
+			cacheChan <- item
 			if messager.conn.RemoteAddr() == item.RemoteAddr() {
 				continue
 			}
 			fmt.Println("正在同步消息: ", messager.content)
 			item.Write([]byte(messager.content))
 		}
+		connChan = cacheChan
 	}
 }
 
